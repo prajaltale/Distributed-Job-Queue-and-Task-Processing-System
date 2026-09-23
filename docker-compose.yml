@@ -1,0 +1,81 @@
+services:
+
+  # PostgreSQL database
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_NAME}          # pulled from your .env file automatically
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # keeps your database data even if the container restarts
+    ports:
+      - "5432:5432"   # optional — lets you still connect with psql/pgAdmin from Windows directly if you want
+
+  # Redis — used as both the Celery broker and our caching layer
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"   # optional, same reasoning as above
+
+  # Django web server
+  web:
+    build: .                     # build using the Dockerfile in this folder
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - .:/app                   # mounts your actual code folder into the container — edits on your machine show up instantly
+      - media_data:/app/media    # shared media storage (explained below)
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env                     # loads all your secrets/config
+    environment:
+      DB_HOST: db                       # overrides .env's 127.0.0.1 — 'db' is this compose file's service name for Postgres
+      DB_PORT: "5432"                   # overrides .env's 5433, since containers always use Postgres's real internal port
+      REDIS_HOST: redis                 # overrides .env — 'redis' is this compose file's service name for Redis
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  # Celery worker — processes background jobs
+  worker:
+    build: .
+    command: celery -A config worker --loglevel=info   # no --pool=solo needed here — that was only a Windows workaround
+    volumes:
+      - .:/app
+      - media_data:/app/media    # same shared volume as web — explained below
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      REDIS_HOST: redis
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  # Flower — monitoring dashboard for Celery
+  flower:
+    build: .                                      # reuses the same image as web/worker — no new Dockerfile needed
+    command: celery -A config flower --port=5555   # starts Flower's web dashboard, listening on port 5555
+    ports:
+      - "5555:5555"                                # exposes the dashboard to your browser at localhost:5555
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      REDIS_HOST: redis
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - redis
+      - worker
+
+volumes:
+  postgres_data:     # persists your database between restarts
+  media_data:         # persists uploaded files, shared between web and worker
