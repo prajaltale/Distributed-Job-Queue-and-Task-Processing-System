@@ -75,25 +75,36 @@ Built to demonstrate real backend and distributed-systems fundamentals — async
 
 ```mermaid
 flowchart TD
-    A[Client] -->|POST /api/jobs/| B[Django REST API]
-    B -->|enqueue job| C[Redis Queue]
-    C --> D1[Celery Worker 1]
-    C --> D2[Celery Worker 2]
-    D1 -->|categorize + summarize| E[Gemini API]
-    D2 -->|categorize + summarize| E
-    D1 -->|cache check/write| F[(Redis Cache)]
-    D2 -->|cache check/write| F
-    D1 -->|save status + results| G[(PostgreSQL)]
-    D2 -->|save status + results| G
+    A[Client]
+    B[Django REST API]
+    C[Redis Queue]
+    E[Gemini API]
+    F[(Redis Cache)]
+    G[(PostgreSQL)]
+    H[Flower Dashboard]
+
+    subgraph W [Celery Workers]
+        direction LR
+        D1[Worker 1]
+        D2[Worker 2]
+    end
+
+    A -->|POST /api/jobs/| B
+    B -->|enqueue job| C
+    C --> W
+    W -->|categorize + summarize| E
+    W -->|cache check/write| F
+    W -->|save status + results| G
     G -->|GET /api/jobs/id/| A
-    H[Flower Dashboard] -.monitors.-> C
-    H -.monitors.-> D1
-    H -.monitors.-> D2
+    H -. monitors .-> C
+    H -. monitors .-> W
 ```
 
-The API and the workers are fully decoupled through Redis: the API's only job is to validate input, persist a `pending` job row, and enqueue a message. Workers pull independently, so the system scales horizontally by adding more workers — not by making the API do more per request.
+Same components throughout — client, API, Redis queue, a pool of Celery workers, Gemini, Redis cache, PostgreSQL, and Flower watching over the queue and workers. The two workers are grouped into one box since they do the same job in parallel; this keeps the diagram from needing six separate crossing lines out to Gemini, the cache, and PostgreSQL.
 
-> Add your own screenshots here — a shot of the Flower dashboard mid-job and a completed job's JSON response go a long way. Drop them in a `/screenshots` folder and reference them like `![Flower dashboard](screenshots/flower.png)`.
+![Flower Dashboard](screenshots/flower-dashboard.png)
+
+The API and the workers are fully decoupled through Redis: the API's only job is to validate input, persist a `pending` job row, and enqueue a message. Workers pull independently, so the system scales horizontally by adding more workers — not by making the API do more per request.
 
 ## Tech Stack
 
@@ -109,7 +120,6 @@ The API and the workers are fully decoupled through Redis: the API's only job is
 | Containerization | Docker + Docker Compose | One-command startup of the full stack |
 
 ## Project Structure
-
 ```
 feedback-processor/
 ├── config/
